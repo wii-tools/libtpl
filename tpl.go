@@ -1,9 +1,10 @@
-package main
+package libtpl
 
 import (
 	"bytes"
 	"encoding/binary"
 	"image"
+	"image/color"
 )
 
 const TPLMagic uint32 = 0x0020AF30
@@ -17,7 +18,7 @@ type FileHeader struct {
 type ImageHeader struct {
 	Height     uint16
 	Width      uint16
-	Format     uint32
+	Format     TextureFormat
 	DataOffset uint32
 	WrapS      uint32
 	WrapT      uint32
@@ -28,6 +29,7 @@ type ImageHeader struct {
 	MidLOD     uint8
 	MaxLOD     uint8
 	Unpacked   uint8
+	_          [8]byte
 }
 
 type TPL struct {
@@ -69,7 +71,7 @@ func makeTPLHeader(raw []byte, format TextureFormat, width, height int) ([]byte,
 		Image: ImageHeader{
 			Height:     uint16(height),
 			Width:      uint16(width),
-			Format:     uint32(format),
+			Format:     format,
 			DataOffset: 64,
 			WrapS:      0,
 			WrapT:      0,
@@ -201,7 +203,7 @@ func ToRGB5A3(img image.Image) ([]byte, error) {
 					if y >= height || x >= width {
 						newPixel = 0
 					} else {
-						rgba := raw[x+(y*width)]
+						rgba := int(raw[x+(y*width)])
 						newPixel = 0
 
 						r := (rgba >> 16) & 0xff
@@ -217,7 +219,7 @@ func ToRGB5A3(img image.Image) ([]byte, error) {
 							b = ((b * 15) / 255) & 0xf
 							a = ((a * 7) / 255) & 0x7
 
-							newPixel |= int((a << 12) | (r << 8) | (g << 4) | b)
+							newPixel |= (a << 12) | (r << 8) | (g << 4) | b
 						} else {
 
 							newPixel |= 1 << 15
@@ -226,13 +228,13 @@ func ToRGB5A3(img image.Image) ([]byte, error) {
 							g = ((g * 31) / 255) & 0x1f
 							b = ((b * 31) / 255) & 0x1f
 
-							newPixel |= int((r << 10) | (g << 5) | b)
+							newPixel |= (r << 10) | (g << 5) | b
 						}
 
 						z++
 						output[z] = byte(newPixel >> 8)
 						z++
-						output[z] = byte(newPixel & 0xff)
+						output[z] = byte(newPixel)
 					}
 				}
 			}
@@ -266,7 +268,7 @@ func ToRGB565(img image.Image) ([]byte, error) {
 						g := (rgb >> 8) & 0xff
 						r := (rgb >> 0) & 0xff
 
-						newPixel = uint16(((r >> 3) << 0) | ((g >> 2) << 5) | ((b >> 3) << 11))
+						newPixel = uint16(((b >> 3) << 11) | ((g >> 2) << 5) | ((r >> 3) << 0))
 					}
 
 					z += 1
@@ -293,15 +295,20 @@ func addPadding(value, padding int) int {
 // imageToRGBA converts an image.Image value to an RGBA bitmap.
 func imageToRGBA(img image.Image) []uint32 {
 	size := img.Bounds()
-	raw := make([]uint32, (size.Max.X-size.Min.X)*(size.Max.Y-size.Min.Y))
+	width, height := size.Max.X, size.Max.Y
+	raw := make([]uint32, width*height)
 	idx := 0
 
-	for y := size.Min.Y; y < size.Max.Y; y++ {
-		for x := size.Min.X; x < size.Max.X; x++ {
-			r, g, b, a := img.At(x, y).RGBA()
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			// Retrieve the color at the current pixel
+			pixelColor := img.At(x, y)
+			// Convert the color to RGBA components
+			rgba := color.RGBAModel.Convert(pixelColor).(color.RGBA)
 
-			raw[idx] = ((a & 0xff) << 24) | ((r & 0xff) << 16) | ((g & 0xff) << 8) | ((b & 0xff) << 0)
-			idx += 1
+			packedColor := (uint32(rgba.A) << 24) | (uint32(rgba.R) << 16) | (uint32(rgba.G) << 8) | uint32(rgba.B)
+			raw[idx] = packedColor
+			idx++
 		}
 	}
 
